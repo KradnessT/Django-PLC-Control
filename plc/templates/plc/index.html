@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <title>PLC 馬達控制</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            background: #eef2f6;
+            padding: 40px;
+        }
+
+        .panel {
+            max-width: 420px;
+            margin: auto;
+            padding: 30px;
+            background: white;
+            border-radius: 12px;
+        }
+
+        button {
+            padding: 14px 30px;
+            margin: 8px;
+            font-size: 20px;
+            color: white;
+            border: none;
+            border-radius: 6px;
+        }
+
+        .start { background: #18864b; }
+        .stop { background: #c73535; }
+        button:disabled { opacity: 0.5; }
+    </style>
+</head>
+<body>
+    <div class="panel">
+        <h1>馬達控制</h1>
+
+        <form id="control-form">
+            {% csrf_token %}
+        </form>
+
+        <p id="status">PLC 運轉命令 Motor：尚未讀取</p>
+        <p id="message" role="status"></p>
+
+        <button type="button" class="start"
+                onclick="operate('start')">
+            啟動
+        </button>
+
+        <button type="button" class="stop"
+                onclick="operate('stop')">
+            停止
+        </button>
+
+        <button type="button" style="background: #42688c"
+                onclick="operate('read')">
+            讀取狀態
+        </button>
+
+        <hr>
+
+        <label for="speed-input">轉速設定值（rpm）</label>
+
+        <input
+            id="speed-input"
+            type="number"
+            min="0"
+            max="1500"
+            step="1"
+            placeholder="0～3000"
+            style="width: 140px; padding: 10px; font-size: 18px;"
+        >
+
+        <button
+            type="button"
+            style="background: #42688c"
+            onclick="writeSpeed()">
+            寫入轉速
+        </button>
+
+        <p id="speed-message" role="status"></p>
+
+
+    <script>
+        const urls = {
+            start: "{% url 'plc:command' 'start' %}",
+            stop: "{% url 'plc:command' 'stop' %}",
+            read: "{% url 'plc:status' %}",
+            speed: "{% url 'plc:speed' %}",
+        };
+
+        const statusText = document.getElementById("status");
+        const message = document.getElementById("message");
+        const csrfToken = document.querySelector(
+            "[name=csrfmiddlewaretoken]"
+        ).value;
+
+        let busy = false;
+
+        async function writeSpeed() {
+            if (busy) return;
+
+            const input = document.getElementById("speed-input");
+            const speedMessage = document.getElementById("speed-message");
+            const rpm = input.valueAsNumber;
+
+            if (!Number.isInteger(rpm) || rpm < 0 || rpm > 3000) {
+                speedMessage.textContent = "請輸入 0～3000 的整數轉速";
+                return;
+            }
+
+            busy = true;
+
+            document.querySelectorAll("button").forEach(
+                button => button.disabled = true
+            );
+
+            input.disabled = true;
+            speedMessage.textContent = "正在寫入轉速…";
+
+            try {
+                const data = await requestApi(
+                    urls.speed,
+                    "POST",
+                    {rpm: rpm}
+                );
+
+                speedMessage.textContent = data.message;
+
+            } catch (error) {
+                speedMessage.textContent =
+                    "未取得寫入成功確認：" + error.message +
+                    "。請確認 PLC 目前設定值，程式不會自動重送。";
+
+            } finally {
+                busy = false;
+                input.disabled = false;
+
+                document.querySelectorAll("button").forEach(
+                    button => button.disabled = false
+                );
+            }
+        }
+
+        async function requestApi(url, method, payload = null) {
+            const headers = {};
+
+            if (method === "POST") {
+                headers["X-CSRFToken"] = csrfToken;
+            }
+
+            const options = {
+                method: method,
+                mode: "same-origin",
+                cache: "no-store",
+                headers: headers,
+            };
+
+            if (payload !== null) {
+                headers["Content-Type"] = "application/json";
+                options.body = JSON.stringify(payload);
+            }
+
+            const response = await fetch(url, options);
+
+            const contentType = response.headers.get("content-type") || "";
+
+            if (!contentType.includes("application/json")) {
+                throw new Error(
+                    `HTTP ${response.status}：請查看 Django 終端機訊息`
+                );
+            }
+
+            const data = await response.json();
+
+            if (!response.ok || !data.ok) {
+                throw new Error(data.message || "請求失敗");
+            }
+
+            return data;
+        }
+
+        async function refreshStatus() {
+            try {
+                const data = await requestApi(urls.read, "GET");
+
+                statusText.textContent = data.motor
+                    ? "PLC 運轉命令 Motor：TRUE"
+                    : "PLC 運轉命令 Motor：FALSE";
+
+            } catch (error) {
+                statusText.textContent =
+                    "PLC 狀態未知，讀取失敗：" + error.message;
+            }
+        }
+
+        async function operate(command) {
+            if (busy) return;
+
+            busy = true;
+            document.querySelectorAll("button").forEach(
+                button => button.disabled = true
+            );
+
+            message.textContent = "處理中…";
+            statusText.textContent = "PLC 運轉命令 Motor：讀取中…";
+
+            try {
+                if (command !== "read") {
+                    const data = await requestApi(urls[command], "POST");
+                    message.textContent = data.message;
+                } else {
+                    message.textContent = "";
+                }
+
+                await refreshStatus();
+
+            } catch (error) {
+                message.textContent =
+                    "未取得寫入成功確認：" + error.message;
+
+                statusText.textContent =
+                    "PLC 狀態未知，請按「讀取狀態」確認；指令不會自動重送";
+
+            } finally {
+                busy = false;
+                document.querySelectorAll("button").forEach(
+                    button => button.disabled = false
+                );
+            }
+        }
+    </script>
+</body>
+</html>

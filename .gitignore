@@ -1,0 +1,12 @@
+# Python 快取
+__pycache__/
+*.py[cod]
+
+
+# 本機資料庫
+*.sqlite3
+*.sqlite3-*
+
+
+# KEY
+sensitive.py
